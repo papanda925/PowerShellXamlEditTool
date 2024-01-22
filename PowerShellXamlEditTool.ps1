@@ -26,6 +26,8 @@ Add-Type -AssemblyName system.Dynamic
     <Grid.RowDefinitions>
         <RowDefinition Height="*"/>
         <RowDefinition Height="*"/>
+        <RowDefinition Height="0.3*"/>
+
     </Grid.RowDefinitions>
     <StackPanel Margin="0" Grid.Row="0" Grid.Column="0"  Background="Cornsilk"  >
     </StackPanel>
@@ -83,28 +85,34 @@ Add-Type -AssemblyName system.Dynamic
                     <DataGrid.Columns>
                         <DataGridTextColumn Header="Index" Binding="{Binding Index}"/>
                         <DataGridTextColumn Header="Name" Binding="{Binding Name}"/>
-                        <DataGridTextColumn Header="Value" Binding="{Binding Value}"/>                
+                        <DataGridTextColumn Header="Value" Binding="{Binding Value, Mode=TwoWay}"/>                
                         <DataGridTextColumn Header="Definition" Binding="{Binding Definition}"/>
                     </DataGrid.Columns>
                 </DataGrid>
             </TabItem>
         </TabControl>
-
     </DockPanel>
-    
     <DockPanel Margin="0"  Grid.Row="1" Grid.Column="1"  >
-
-                <DataGrid Name="DataGrid3" 
-                    AutoGenerateColumns="False" 
-                    HorizontalScrollBarVisibility ="Visible"
-                    VerticalScrollBarVisibility = "Visible" >
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Target" Binding="{Binding Target}"/>                
-                        <DataGridTextColumn Header="SampleCode" Binding="{Binding SampleCode}"/>
-                    </DataGrid.Columns>
-                </DataGrid>
+        <DataGrid Name="DataGrid3" 
+            AutoGenerateColumns="False" 
+            HorizontalScrollBarVisibility ="Visible"
+            VerticalScrollBarVisibility = "Visible" >
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Target" Binding="{Binding Target}"/>                
+                <DataGridTextColumn Header="SampleCode" Binding="{Binding SampleCode}"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+    <DockPanel Margin="0"  Grid.Row="2" Grid.Column="0"  Grid.ColumnSpan="2"  >
+    <TextBox
+        Name="ExceptionTxt"
+        TextWrapping="Wrap"
+        AcceptsReturn="True"
+        Text="{Binding Message,  Mode=TwoWay, UpdateSourceTrigger=PropertyChanged }"
+        VerticalScrollBarVisibility="Visible" />
     </DockPanel>
     </Grid>
+
 </Window>
 '@
 
@@ -118,6 +126,7 @@ try {
     $window | Add-Member NoteProperty -Name 'DataGrid_Event' -Value $window.FindName('DataGrid_Event') -Force
     $window | Add-Member NoteProperty -Name 'DataGrid_Method' -Value $window.FindName('DataGrid_Method') -Force
     $window | Add-Member NoteProperty -Name 'DataGrid_Property' -Value $window.FindName('DataGrid_Property') -Force
+    $window | Add-Member NoteProperty -Name 'ExceptionTxt' -Value $window.FindName('ExceptionTxt') -Force
 
     $window | Add-Member NoteProperty -Name 'DataGrid3' -Value $window.FindName('DataGrid3') -Force
 
@@ -127,7 +136,10 @@ try {
     $MethodObservableCollection = New-Object ObservableCollection[System.Dynamic.ExpandoObject]
     $PropertyObservableCollection = New-Object ObservableCollection[System.Dynamic.ExpandoObject]
     
-    
+    $ExceptionTxtExpandoObject = [System.Dynamic.ExpandoObject]::new()
+    $window.ExceptionTxt.DataContext = $ExceptionTxtExpandoObject
+    $ExceptionTxtExpandoObject.Message  = "test"
+
     $ItemsObservableCollection = New-Object ObservableCollection[System.Dynamic.ExpandoObject]
 
     $window.DataGrid.ItemsSource = $ObservableCollection
@@ -159,12 +171,64 @@ try {
 
 
     $window.DataGrid.ADD_SelectionChanged{
-        [int]$index = 0
+        $Index = @{}
+        [int]$Index["Event"] = 0
+        [int]$Index["Method"] = 0
+        [int]$Index["Property"] = 0
+
+ 
         $EventObservableCollection.Clear()
+        $MethodObservableCollection.Clear()
+        $PropertyObservableCollection.Clear()
+
         [string]$s = ($this.SelectedItem.Namespace + "." + $this.SelectedItem.Name)
         try {
             $obj = New-Object $s
-            Write-Host "# ------------------------- Event ------------------------- "
+            $ret  = ($obj | Get-Member)
+            $ret |  Where-Object{
+                $ExpandoObject = [System.Dynamic.ExpandoObject]::new()
+                $ExpandoObject.TypeName  =  $_.TypeName
+                $ExpandoObject.Definition = $_.Definition
+                $ExpandoObject.Name  =  $_.Name
+                $ExpandoObject.MemberType =  $_.MemberType
+                $ExpandoObject.Namespace = $this.SelectedItem.Namespace 
+                write-host  ('$obj = New-Object ' + $_.TypeName)
+                Invoke-Expression ('$obj = New-Object ' + $_.TypeName)
+                $ExpandoObject.obj = $obj
+
+                switch ($_.MemberType) {
+                    "Event" 
+                    {
+                        write-host "Event"
+                        $Index["Event"]++
+                        $ExpandoObject.Index  =  $Index["Event"]        
+                        $EventObservableCollection.add($ExpandoObject)
+
+                    }
+                    "Method"
+                    {
+                        write-host "Method"
+                        $Index["Method"]++
+                        $ExpandoObject.Index  =  $Index["Method"]        
+                        $MethodObservableCollection.add($ExpandoObject)
+                    }
+                    "Property"
+                    {
+                        write-host "Property"
+                        write-host  ( 'Property $ExpandoObject.Value = $obj.' + $ExpandoObject.Name.ToString())
+
+                        Invoke-Expression ('$ExpandoObject.Value = $obj.' + $ExpandoObject.Name.ToString())
+                        $Index["Property"]++
+                        $ExpandoObject.Index  =  $Index["Property"]        
+                        $PropertyObservableCollection.add($ExpandoObject)
+                    }
+                    default {"Not matched."}
+                }
+
+            } 
+            write-host "End"
+           
+<#
             $ret  = ($obj | Get-Member -MemberType "Event") 
             $ret |  Where-Object{ 
 #                Write-Host (" $" + "window.ADD_" + $_.name + "{   write-host """ + $_.name + """ }")
@@ -235,13 +299,16 @@ try {
                 $PropertyObservableCollection.add($ExpandoObject)
 
             }
-
+#>
         }
         catch {
             <#Do this if a terminating exception happens#>
             write-host "DataGrid.ADD_SelectionChanged false"
+            [String]$ExceptionString = "Exception ADD_SelectionChanged"
+            $ExceptionString += "`r`n"
             $ExceptionString += $PSItem.Exception
             write-host $ExceptionString
+            $ExceptionTxtExpandoObject.Message = $ExceptionString
 
         }
     }
@@ -276,6 +343,7 @@ try {
             $ExceptionString += "`r`n"
             $ExceptionString += $PSItem.Exception
             write-host $ExceptionString
+            $ExceptionTxtExpandoObject.Message = $ExceptionString
             [void][System.Windows.Forms.MessageBox]::Show($ExceptionString, $PSItem.Exception.Source, "OK", "Error")
         }
 
@@ -327,6 +395,7 @@ try {
             $ExceptionString += "`r`n"
             $ExceptionString += $PSItem.Exception
             write-host $ExceptionString
+            $ExceptionTxtExpandoObject.Message = $ExceptionString
             #[void][System.Windows.Forms.MessageBox]::Show($ExceptionString, $PSItem.Exception.Source, "OK", "Error")
         }
       
@@ -346,6 +415,8 @@ catch {
     $ExceptionString += "`r`n"
     $ExceptionString += $PSItem.Exception
     write-host $ExceptionString
+    $ExceptionTxtExpandoObject.Message = $ExceptionString
+
     [void][System.Windows.Forms.MessageBox]::Show($ExceptionString, $PSItem.Exception.Source, "OK", "Error")
     # Write-Output $ExceptionString | Out-File -Encoding default -Append ((Get-Location).Path + "\MaGaTechDebuglog.txt")
 
